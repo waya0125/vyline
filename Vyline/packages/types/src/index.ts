@@ -70,6 +70,7 @@ export * from "./accountFeatures.js";
 export * from "./unsendPolicy.js";
 export * from "./callVideo.js";
 export * from "./callRecording.js";
+export * from "./callRecord.js";
 
 // ─── Chat ─────────────────────────────────────
 
