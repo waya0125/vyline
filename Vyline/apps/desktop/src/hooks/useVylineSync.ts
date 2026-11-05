@@ -12,7 +12,7 @@ import { useLineData } from "../hooks/useLineData.js";
 
 import { useHiddenChats } from "../hooks/useHiddenChats.js";
 
-import { useStore } from "../lib/store.js";
+import { hasCheckedReadReceipts, useStore } from "../lib/store.js";
 
 function eventsPollIntervalMs(): number {
   if (typeof document === "undefined") return 2_000;
@@ -143,7 +143,7 @@ export function useVylineSync(enabled = true) {
   useEffect(() => {
     if (!enabled || !accountId || !activeChatId) return;
 
-    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    // 非表示で開いた場合も、表示に戻ったときに確かめられるよう購読はしておく（tick・prime は非表示の間は何もしない）
 
     // 既読者一覧を追い続けるため、既読済みでも直近 15 分の自分のメッセージがあればポーリングする
     const shouldPoll = () => {
@@ -185,7 +185,36 @@ export function useVylineSync(enabled = true) {
 
     const t = setInterval(tick, 5_000);
 
-    return () => clearInterval(t);
+    // 開いた直後（再読み込みの後など）はまだ履歴が無く、最初の tick では確認しない。
+    // 自分のメッセージが入った時点で一度確認し、次の tick（最大 5 秒）まで「送信済み」のまま待たせない。
+    // 期限を過ぎた古い発言も、開いて最初の一回は store 側（refreshReadReceipts）で取得する。
+    // 非表示の間は取りに行かず、表示に戻ったときにもう一度確かめる。
+    // 取得に失敗したら完了扱いにせず、次の tick・表示の復帰・store の更新でまた取りに行く。
+    let primed = false;
+    let priming = false;
+    const prime = (state: ReturnType<typeof useStore.getState>) => {
+      if (primed || priming || document.visibilityState === "hidden") return;
+      if (!state.messages.some((m) => m.chatId === activeChatId && m.authorId === "me")) return;
+      priming = true;
+      // tick() は追跡の期限（グループは 15 分）で止まるので、最初の一回は直接取りに行く。
+      void refreshReadReceipts(activeChatId)
+        .catch(() => undefined)
+        .finally(() => {
+          priming = false;
+          primed = hasCheckedReadReceipts(accountId, activeChatId);
+        });
+    };
+    const unsubscribe = useStore.subscribe(prime);
+    const onVisible = () => prime(useStore.getState());
+    document.addEventListener("visibilitychange", onVisible);
+    const retry = setInterval(() => prime(useStore.getState()), 5_000);
+
+    return () => {
+      clearInterval(t);
+      clearInterval(retry);
+      unsubscribe();
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [enabled, accountId, activeChatId, refreshReadReceipts]);
 
   useEffect(() => {

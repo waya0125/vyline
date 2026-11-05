@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { useStore } from "./store.js";
+import { hasCheckedReadReceipts, useStore } from "./store.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -71,4 +71,49 @@ test("manual mark-all sends receipts even when automatic receipts are disabled",
   expect(requests[0]?.url).toContain("/read-all");
   expect(requests[0]?.body.chatMids?.sort()).toEqual(["c-disabled-chat", "u-unread-chat"]);
   expect(useStore.getState().chats.every((chat) => chat.unread === 0)).toBe(true);
+});
+
+test("an old group chat is checked again after a failed first read receipt fetch", async () => {
+  const chatId = "c-old-group";
+  const accountId = "read-receipt-retry";
+  let calls = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    if (String(input).includes("/getMessageReadRange/")) {
+      calls += 1;
+      if (calls === 1) return Response.json({ ok: false });
+      return Response.json({ ok: true, receipts: { "100": { readCount: 2, readBy: [] } } });
+    }
+    return Response.json({ ok: true });
+  }) as typeof fetch;
+  useStore.setState({
+    accountId,
+    chats: [],
+    readWatermarks: {},
+    messages: [
+      {
+        id: "100",
+        chatId,
+        authorId: "me",
+        kind: "text",
+        text: "",
+        // 追跡の期限（15 分）を過ぎた発言
+        createdAt: Date.now() - 60 * 60_000,
+        messageState: "normal",
+        read: false,
+      } as never,
+    ],
+  });
+
+  await useStore.getState().refreshReadReceipts(chatId);
+  expect(calls).toBe(1);
+  expect(hasCheckedReadReceipts(accountId, chatId)).toBe(false);
+
+  await useStore.getState().refreshReadReceipts(chatId);
+  expect(calls).toBe(2);
+  expect(hasCheckedReadReceipts(accountId, chatId)).toBe(true);
+  expect(useStore.getState().messages[0]?.readCount).toBe(2);
+
+  // 取得できた後は、期限を過ぎた発言のために取り直さない
+  await useStore.getState().refreshReadReceipts(chatId);
+  expect(calls).toBe(2);
 });
