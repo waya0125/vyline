@@ -1,4 +1,5 @@
 import type { Chat as LineChat, Message as LineMessage } from "@vyline/types";
+import { readCallRecord } from "@vyline/types";
 import { extractStickerId, lineCdnProxy, lineStickerUrl } from "../utils/lineMedia.js";
 import { getCombinationStickerPreview } from "../utils/combinationStickers.js";
 import {
@@ -591,24 +592,9 @@ function parseCallMeta(
   contentType: string,
   meta: Record<string, unknown> | null,
 ): import("./store-types.js").CallMessageMeta {
-  const u = contentType.toUpperCase();
-  const typeHint = String(meta?.CALL_TYPE ?? meta?.TYPE ?? "").toUpperCase();
-  const video =
-    (u.includes("VIDEO") && u.includes("CALL")) || typeHint.includes("VIDEO") || typeHint === "1";
-  const group = u.includes("GROUP") || Boolean(meta?.GC_DURATION);
-  const durationSec = parseCallDurationSeconds(meta);
-  const result = String(meta?.RESULT ?? meta?.eventType ?? "").toLowerCase();
-  let outcome: import("./store-types.js").CallMessageMeta["outcome"] = "ended";
-  if (result.includes("cancel") || result.includes("miss") || result === "3") {
-    outcome = "missed";
-  } else if (result.includes("decline") || result.includes("reject") || result === "2") {
-    outcome = "declined";
-  } else if (result.includes("busy")) {
-    outcome = "busy";
-  } else if (!durationSec && !result) {
-    outcome = "ended";
-  }
-  return { video, group, durationSec, outcome };
+  // 種類と結果の読み方はバックエンドの一覧のプレビューと共通（@vyline/types の readCallRecord）
+  const { video, group, outcome } = readCallRecord(contentType, meta);
+  return { video, group, durationSec: parseCallDurationSeconds(meta), outcome };
 }
 
 export function buildMembersFromMessages(
